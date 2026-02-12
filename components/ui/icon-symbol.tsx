@@ -20,6 +20,7 @@ const MAPPING = {
   'chevron.right': 'chevron-right',
   'list.bullet': 'format-list-bulleted',
   'questionmark.circle.fill': 'help',
+  'gamecontroller.fill': 'sports-esports',
 } as IconMapping;
 
 /**
