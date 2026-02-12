@@ -37,7 +37,7 @@ export interface RoomData {
   gameWinner: 'host' | 'guest' | null;
   hostGuess: PlayerGuess | null;
   guestGuess: PlayerGuess | null;
-  countdownStartAt: Timestamp | null;
+  countdownEndAt: number | null; // Unix timestamp in ms when countdown ends
   createdAt: Timestamp;
 }
 
@@ -168,7 +168,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         gameWinner: null,
         hostGuess: null,
         guestGuess: null,
-        countdownStartAt: null,
+        countdownEndAt: null,
         createdAt: serverTimestamp() as Timestamp,
       };
 
@@ -270,7 +270,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         roundWinner: null,
         hostGuess: null,
         guestGuess: null,
-        countdownStartAt: serverTimestamp(),
+        countdownEndAt: Date.now() + 3000, // 3 seconds from now
       });
     } catch (err) {
       console.error('Start game error:', err);
@@ -366,7 +366,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         roundWinner: null,
         hostGuess: null,
         guestGuess: null,
-        countdownStartAt: serverTimestamp(),
+        countdownEndAt: Date.now() + 3000,
       });
     } catch (err) {
       console.error('Next round error:', err);
@@ -388,7 +388,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         gameWinner: null,
         hostGuess: null,
         guestGuess: null,
-        countdownStartAt: serverTimestamp(),
+        countdownEndAt: Date.now() + 3000,
       });
     } catch (err) {
       console.error('Play again error:', err);

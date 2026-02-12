@@ -7,6 +7,8 @@ import {
   Keyboard,
   ActivityIndicator,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -21,13 +23,18 @@ import Animated, {
   FadeInDown,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { SparkleField } from '@/components/sparkle';
 import { Fireworks, UnicornCelebration, ConfettiRain, BloodRain, ToastyCelebration } from '@/components/celebration';
 import { useGuessHistory } from '@/context/guess-history';
+import {
+  playVictorySound,
+  playFatalitySound,
+  playToastySound,
+  playVictoryVibration,
+} from '@/utils/game-sounds';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -57,91 +64,6 @@ function normalizeString(str: string): string {
   return str.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
 }
 
-// Configure audio mode (call once)
-async function configureAudio() {
-  try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-    });
-  } catch (error) {
-    console.log('Audio mode config error:', error);
-  }
-}
-
-// Play a sound from URL
-async function playSoundFromUrl(url: string) {
-  try {
-    await configureAudio();
-    const { sound } = await Audio.Sound.createAsync(
-      { uri: url },
-      { shouldPlay: true, volume: 1.0 }
-    );
-
-    // Unload after playing
-    sound.setOnPlaybackStatusUpdate((status) => {
-      if (status.isLoaded && status.didJustFinish) {
-        sound.unloadAsync();
-      }
-    });
-  } catch (error) {
-    console.log('Sound playback error:', error);
-  }
-}
-
-// Play victory sound - Pokemon healing/success jingle
-async function playVictorySound() {
-  // Pokemon Center healing complete sound
-  await playSoundFromUrl('https://play.pokemonshowdown.com/audio/cries/pikachu.mp3');
-}
-
-// Play wrong guess sound - Pokemon faint/miss sound
-async function playWrongSound() {
-  // Sad Pokemon sound (Psyduck)
-  await playSoundFromUrl('https://play.pokemonshowdown.com/audio/cries/psyduck.mp3');
-}
-
-// Play Mortal Kombat FATALITY sound - LOUD
-async function playBloodDrippingSound() {
-  try {
-    await configureAudio();
-    const url = 'https://www.myinstants.com/media/sounds/16_2.mp3';
-
-    // Play twice with slight delay for louder, more impactful effect
-    const { sound: sound1 } = await Audio.Sound.createAsync(
-      { uri: url },
-      { shouldPlay: true, volume: 1.0 }
-    );
-
-    // Second sound slightly delayed for echo/chorus effect
-    setTimeout(async () => {
-      const { sound: sound2 } = await Audio.Sound.createAsync(
-        { uri: url },
-        { shouldPlay: true, volume: 1.0 }
-      );
-      sound2.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound2.unloadAsync();
-        }
-      });
-    }, 50);
-
-    sound1.setOnPlaybackStatusUpdate((status) => {
-      if (status.isLoaded && status.didJustFinish) {
-        sound1.unloadAsync();
-      }
-    });
-  } catch (error) {
-    console.log('Fatality sound error:', error);
-  }
-}
-
-// Play Mortal Kombat TOASTY! sound
-async function playToastySound() {
-  await playSoundFromUrl('https://www.myinstants.com/media/sounds/toasty_tfCWsU6.mp3');
-}
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -218,33 +140,12 @@ export default function HomeScreen() {
         playToastySound();
       }, 1000);
 
-      // Victory vibration pattern - go crazy!
-      const vibratePattern = async () => {
-        // First burst - quick celebrations
-        for (let i = 0; i < 5; i++) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          await new Promise(resolve => setTimeout(resolve, 80));
-        }
-        // Pause
-        await new Promise(resolve => setTimeout(resolve, 200));
-        // Second burst - even more!
-        for (let i = 0; i < 8; i++) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          await new Promise(resolve => setTimeout(resolve, 60));
-        }
-        // Final big ones
-        await new Promise(resolve => setTimeout(resolve, 150));
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await new Promise(resolve => setTimeout(resolve, 200));
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await new Promise(resolve => setTimeout(resolve, 200));
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      };
-      vibratePattern();
+      // Victory vibration pattern
+      playVictoryVibration();
     } else {
       // WRONG - vibrate, play blood sound, reveal, and load new Pokemon
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      playBloodDrippingSound();
+      playFatalitySound();
 
       // Save to history
       addGuess({
@@ -330,118 +231,124 @@ export default function HomeScreen() {
       {showToasty && <ToastyCelebration />}
 
       {/* Main Content */}
-      <View style={[styles.content, { paddingTop: insets.top + 20 }]}>
-        {/* Title */}
-        <Animated.View entering={FadeInDown.duration(600)}>
-          <ThemedText style={styles.title}>✨ Who's That Pokémon? ✨</ThemedText>
-        </Animated.View>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
+        <View style={[styles.content, { paddingTop: insets.top + 20 }]}>
+          {/* Title */}
+          <Animated.View entering={FadeInDown.duration(600)}>
+            <ThemedText style={styles.title}>✨ Who's That Pokémon? ✨</ThemedText>
+          </Animated.View>
 
-        {/* Pokemon Card */}
-        <Animated.View style={[styles.pokemonCard, cardAnimatedStyle]}>
-          <SparkleField count={8} width={280} height={300} />
+          {/* Pokemon Card */}
+          <Animated.View style={[styles.pokemonCard, cardAnimatedStyle]}>
+            <SparkleField count={8} width={280} height={300} />
 
-          {isLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#FFFFFF" />
-              <ThemedText style={styles.loadingText}>Loading...</ThemedText>
-            </View>
-          ) : error ? (
-            <Pressable onPress={loadNewPokemon} style={styles.errorContainer}>
-              <ThemedText style={styles.errorText}>{error}</ThemedText>
-            </Pressable>
-          ) : (
-            <>
-              <ThemedText style={styles.questionMark}>❓</ThemedText>
-              {imageUrl && (
-                <Image
-                  source={{ uri: imageUrl }}
-                  style={styles.pokemonImage}
-                  contentFit="contain"
-                  tintColor={isRevealed ? undefined : '#000000'}
-                  transition={500}
-                />
-              )}
-              {isRevealed && (
-                <Animated.View entering={ZoomIn.duration(500).delay(300)}>
-                  {wasCorrect && (
-                    <ThemedText style={styles.pokemonMasterText}>
-                      🏆 POKÉMON MASTER! 🏆
-                    </ThemedText>
-                  )}
-                  <ThemedText style={[styles.pokemonName, !wasCorrect && styles.wrongGuessName]}>
-                    {wasCorrect
-                      ? `🎉 ${pokemon?.name.toUpperCase()}! 🎉`
-                      : `It was ${pokemon?.name.toUpperCase()}!`
-                    }
-                  </ThemedText>
-                  {!wasCorrect && (
-                    <ThemedText style={styles.nextPokemonText}>
-                      Loading next Pokémon...
-                    </ThemedText>
-                  )}
-                </Animated.View>
-              )}
-            </>
-          )}
-        </Animated.View>
-
-        {/* Input Section */}
-        {!isRevealed && !isLoading && !error && (
-          <Animated.View style={[styles.inputSection, shakeStyle]}>
-            {/* Sparkly Input */}
-            <View style={styles.inputWrapper}>
-              <LinearGradient
-                colors={['#FF69B4', '#9B30FF', '#00CED1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.inputGradientBorder}
-              >
-                <Animated.View style={[styles.inputInner, inputAnimatedStyle]}>
-                  <TextInput
-                    style={styles.textInput}
-                    value={guess}
-                    onChangeText={setGuess}
-                    placeholder="✨ Enter Pokémon name ✨"
-                    placeholderTextColor="rgba(255, 255, 255, 0.6)"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onSubmitEditing={handleGuess}
-                    returnKeyType="go"
+            {isLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+                <ThemedText style={styles.loadingText}>Loading...</ThemedText>
+              </View>
+            ) : error ? (
+              <Pressable onPress={loadNewPokemon} style={styles.errorContainer}>
+                <ThemedText style={styles.errorText}>{error}</ThemedText>
+              </Pressable>
+            ) : (
+              <>
+                <ThemedText style={styles.questionMark}>❓</ThemedText>
+                {imageUrl && (
+                  <Image
+                    source={{ uri: imageUrl }}
+                    style={styles.pokemonImage}
+                    contentFit="contain"
+                    tintColor={isRevealed ? undefined : '#000000'}
+                    transition={500}
                   />
-                </Animated.View>
-              </LinearGradient>
-            </View>
-
-            {/* Sparkly Guess Button */}
-            <Pressable onPress={handleGuess} disabled={!guess.trim()}>
-              <LinearGradient
-                colors={['#FF1493', '#FF69B4', '#DA70D6', '#9B30FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={[styles.guessButton, !guess.trim() && styles.guessButtonDisabled]}
-              >
-                <ThemedText style={styles.guessButtonText}>⭐ GUESS! ⭐</ThemedText>
-              </LinearGradient>
-            </Pressable>
+                )}
+                {isRevealed && (
+                  <Animated.View entering={ZoomIn.duration(500).delay(300)}>
+                    {wasCorrect && (
+                      <ThemedText style={styles.pokemonMasterText}>
+                        🏆 POKÉMON MASTER! 🏆
+                      </ThemedText>
+                    )}
+                    <ThemedText style={[styles.pokemonName, !wasCorrect && styles.wrongGuessName]}>
+                      {wasCorrect
+                        ? `🎉 ${pokemon?.name.toUpperCase()}! 🎉`
+                        : `It was ${pokemon?.name.toUpperCase()}!`
+                      }
+                    </ThemedText>
+                    {!wasCorrect && (
+                      <ThemedText style={styles.nextPokemonText}>
+                        Loading next Pokémon...
+                      </ThemedText>
+                    )}
+                  </Animated.View>
+                )}
+              </>
+            )}
           </Animated.View>
-        )}
 
-        {/* Play Again Button */}
-        {isRevealed && wasCorrect && (
-          <Animated.View entering={FadeIn.duration(500).delay(2000)}>
-            <Pressable onPress={loadNewPokemon}>
-              <LinearGradient
-                colors={['#00CED1', '#00FFFF', '#7FFFD4']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.playAgainButton}
-              >
-                <ThemedText style={styles.playAgainText}>✨ Play Again! ✨</ThemedText>
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        )}
-      </View>
+          {/* Input Section */}
+          {!isRevealed && !isLoading && !error && (
+            <Animated.View style={[styles.inputSection, shakeStyle]}>
+              {/* Sparkly Input */}
+              <View style={styles.inputWrapper}>
+                <LinearGradient
+                  colors={['#FF69B4', '#9B30FF', '#00CED1']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.inputGradientBorder}
+                >
+                  <Animated.View style={[styles.inputInner, inputAnimatedStyle]}>
+                    <TextInput
+                      style={styles.textInput}
+                      value={guess}
+                      onChangeText={setGuess}
+                      placeholder="✨ Enter Pokémon name ✨"
+                      placeholderTextColor="rgba(255, 255, 255, 0.6)"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onSubmitEditing={handleGuess}
+                      returnKeyType="go"
+                    />
+                  </Animated.View>
+                </LinearGradient>
+              </View>
+
+              {/* Sparkly Guess Button */}
+              <Pressable onPress={handleGuess} disabled={!guess.trim()}>
+                <LinearGradient
+                  colors={['#FF1493', '#FF69B4', '#DA70D6', '#9B30FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.guessButton, !guess.trim() && styles.guessButtonDisabled]}
+                >
+                  <ThemedText style={styles.guessButtonText}>⭐ GUESS! ⭐</ThemedText>
+                </LinearGradient>
+              </Pressable>
+            </Animated.View>
+          )}
+
+          {/* Play Again Button */}
+          {isRevealed && wasCorrect && (
+            <Animated.View entering={FadeIn.duration(500).delay(2000)}>
+              <Pressable onPress={loadNewPokemon}>
+                <LinearGradient
+                  colors={['#00CED1', '#00FFFF', '#7FFFD4']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.playAgainButton}
+                >
+                  <ThemedText style={styles.playAgainText}>✨ Play Again! ✨</ThemedText>
+                </LinearGradient>
+              </Pressable>
+            </Animated.View>
+          )}
+        </View>
+      </KeyboardAvoidingView>
 
       {/* FATALITY - Blood drips ON TOP of everything */}
       {showBloodRain && <BloodRain />}
@@ -451,6 +358,9 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  keyboardAvoid: {
     flex: 1,
   },
   content: {

@@ -8,6 +8,9 @@ import {
   ActivityIndicator,
   Dimensions,
   Share,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -30,7 +33,14 @@ import * as Clipboard from 'expo-clipboard';
 import { ThemedText } from '@/components/themed-text';
 import { SparkleField } from '@/components/sparkle';
 import { useBattle } from '@/context/battle-context';
-import { Fireworks, ConfettiRain } from '@/components/celebration';
+import { Fireworks, ConfettiRain, UnicornCelebration, BloodRain, ToastyCelebration } from '@/components/celebration';
+import {
+  playVictorySound,
+  playFatalitySound,
+  playToastySound,
+  playVictoryVibration,
+  playDefeatVibration,
+} from '@/utils/game-sounds';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -57,6 +67,9 @@ export default function BattleScreen() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [roundEndCountdown, setRoundEndCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showVictoryCelebration, setShowVictoryCelebration] = useState(false);
+  const [showDefeatAnimation, setShowDefeatAnimation] = useState(false);
+  const [showToasty, setShowToasty] = useState(false);
 
   // Animation values
   const shakeX = useSharedValue(0);
@@ -76,15 +89,14 @@ export default function BattleScreen() {
     }
   }, [battleState]);
 
-  // Countdown effect - synced to server timestamp
+  // Countdown effect - synced to end time
   useEffect(() => {
-    if (battleState === 'countdown' && room?.countdownStartAt) {
-      const startTime = room.countdownStartAt.toDate().getTime();
+    if (battleState === 'countdown' && room?.countdownEndAt) {
+      const endTime = room.countdownEndAt;
 
       const updateCountdown = () => {
         const now = Date.now();
-        const elapsed = Math.floor((now - startTime) / 1000);
-        const remaining = 3 - elapsed;
+        const remaining = Math.ceil((endTime - now) / 1000);
 
         if (remaining <= 0) {
           setCountdown(null);
@@ -107,7 +119,7 @@ export default function BattleScreen() {
       const interval = setInterval(updateCountdown, 100);
       return () => clearInterval(interval);
     }
-  }, [battleState, room?.countdownStartAt, playerRole, roomCode]);
+  }, [battleState, room?.countdownEndAt, playerRole, roomCode]);
 
   // Clear guess when new round starts
   useEffect(() => {
@@ -187,8 +199,43 @@ export default function BattleScreen() {
   }));
 
   const isWinner = room?.gameWinner === playerRole;
+  const isTie = room?.gameWinner === null && battleState === 'finished';
+  const isLoser = !isWinner && !isTie && battleState === 'finished';
   const wonRound = room?.roundWinner === playerRole;
   const bothWrong = room?.roundWinner === 'none';
+
+  // Game end animations
+  useEffect(() => {
+    if (battleState === 'finished') {
+      // Reset animations first
+      setShowVictoryCelebration(false);
+      setShowDefeatAnimation(false);
+      setShowToasty(false);
+
+      if (isWinner) {
+        // Winner gets victory celebration
+        setShowVictoryCelebration(true);
+        playVictorySound();
+        playVictoryVibration();
+
+        // TOASTY! after 1 second
+        setTimeout(() => {
+          setShowToasty(true);
+          playToastySound();
+        }, 1000);
+      } else {
+        // Loser or tie gets defeat animation
+        setShowDefeatAnimation(true);
+        playFatalitySound();
+        playDefeatVibration();
+      }
+    } else {
+      // Reset when not finished
+      setShowVictoryCelebration(false);
+      setShowDefeatAnimation(false);
+      setShowToasty(false);
+    }
+  }, [battleState, isWinner]);
 
   // Render different states
   const renderContent = () => {
@@ -371,7 +418,12 @@ export default function BattleScreen() {
     // Playing - show Pokemon and guess input
     if (battleState === 'playing' || battleState === 'countdown') {
       return (
-        <View style={styles.battleContainer}>
+        <ScrollView
+          style={styles.battleScrollView}
+          contentContainerStyle={styles.battleContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           {/* Scoreboard */}
           <View style={styles.scoreboard}>
             <View style={styles.scoreItem}>
@@ -448,7 +500,7 @@ export default function BattleScreen() {
               </Pressable>
             </Animated.View>
           )}
-        </View>
+        </ScrollView>
       );
     }
 
@@ -456,8 +508,6 @@ export default function BattleScreen() {
     if (battleState === 'round_end') {
       return (
         <Animated.View entering={ZoomIn.duration(500)} style={styles.roundEndContainer}>
-          {wonRound && <ConfettiRain />}
-
           <ThemedText style={styles.roundResultTitle}>
             {bothWrong
               ? '😵 BOTH WRONG! 😵'
@@ -499,19 +549,16 @@ export default function BattleScreen() {
     if (battleState === 'finished') {
       return (
         <Animated.View entering={ZoomIn.duration(500)} style={styles.finishedContainer}>
-          {isWinner && (
-            <>
-              <Fireworks />
-              <ConfettiRain />
-            </>
-          )}
-
           <ThemedText style={styles.gameOverTitle}>
-            {isWinner ? '🏆 VICTORY! 🏆' : '💀 DEFEAT 💀'}
+            {isWinner ? '🏆 VICTORY! 🏆' : isTie ? '💀 TIE GAME 💀' : '💀 DEFEAT 💀'}
           </ThemedText>
 
           <ThemedText style={styles.gameOverSubtitle}>
-            {isWinner ? 'You are the Pokemon Master!' : 'Better luck next time!'}
+            {isWinner
+              ? 'You are the Pokemon Master!'
+              : isTie
+              ? 'Nobody wins... FATALITY!'
+              : 'Better luck next time!'}
           </ThemedText>
 
           <View style={styles.finalScores}>
@@ -578,15 +625,39 @@ export default function BattleScreen() {
       {/* Background Sparkles */}
       <SparkleField count={12} width={SCREEN_WIDTH} height={SCREEN_HEIGHT} />
 
-      <View style={[styles.content, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 20 }]}>
-        {renderContent()}
-      </View>
+      {/* Victory Celebration */}
+      {showVictoryCelebration && (
+        <>
+          <Fireworks />
+          <UnicornCelebration />
+          <ConfettiRain />
+        </>
+      )}
+
+      {/* TOASTY! */}
+      {showToasty && <ToastyCelebration />}
+
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
+        <View style={[styles.content, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 20 }]}>
+          {renderContent()}
+        </View>
+      </KeyboardAvoidingView>
+
+      {/* FATALITY - Blood drips ON TOP of everything */}
+      {showDefeatAnimation && <BloodRain />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  keyboardAvoid: {
     flex: 1,
   },
   content: {
@@ -837,10 +908,13 @@ const styles = StyleSheet.create({
     textShadowRadius: 10,
   },
   // Battle styles
-  battleContainer: {
+  battleScrollView: {
     flex: 1,
+  },
+  battleContainer: {
     alignItems: 'center',
     paddingTop: 10,
+    paddingBottom: 30,
   },
   scoreboard: {
     flexDirection: 'row',
